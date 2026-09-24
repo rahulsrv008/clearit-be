@@ -19,12 +19,16 @@ import {
   Coupon,
   CouponUsage,
   CustomerAddress,
+  HomeCategory,
+  HomeCategoryOption,
+  HomePricingTier,
   Payment,
   Rating,
   Service,
   ServiceArea,
   ServicePricing,
 } from 'src/database/entities';
+import { CreatePlanBookingDto } from './dto/create-plan-booking.dto';
 import { IdentityService } from 'src/common/auth/identity.service';
 import { BookingHistoryService } from 'src/common/booking/booking-history.service';
 import {
@@ -85,6 +89,10 @@ export class CustomerBookingsService {
     private readonly couponUsageRepo: Repository<CouponUsage>,
     @InjectRepository(Rating)
     private readonly ratingRepo: Repository<Rating>,
+    @InjectRepository(HomeCategory)
+    private readonly homeCategoryRepo: Repository<HomeCategory>,
+    @InjectRepository(HomeCategoryOption)
+    private readonly homeOptionRepo: Repository<HomeCategoryOption>,
     private readonly identity: IdentityService,
     private readonly history: BookingHistoryService,
     private readonly notifications: NotificationDispatchService,
@@ -200,6 +208,103 @@ export class CustomerBookingsService {
     return this.detail(userId, booking.id);
   }
 
+  /**
+   * On Demand books today, starting shortly; monthly plans start tomorrow at the
+   * shift's start time. The price always comes from the admin-managed tier.
+   */
+  async createPlan(userId: string, dto: CreatePlanBookingDto) {
+    const customerId = await this.identity.requireCustomerId(userId);
+    const address = await this.addressRepo.findOne({
+      where: { id: dto.addressId, customerId },
+    });
+    if (!address) throw new NotFoundException('Address not found');
+
+    const category = await this.homeCategoryRepo.findOne({
+      where: { id: dto.categoryId, isActive: true },
+    });
+    if (!category) throw new NotFoundException('This service is unavailable');
+
+    let option: HomeCategoryOption | null = null;
+    if (dto.optionId) {
+      option = await this.homeOptionRepo.findOne({
+        where: { id: dto.optionId, categoryId: category.id, isActive: true },
+      });
+      if (!option) throw new NotFoundException('This plan is unavailable');
+    }
+
+    const tiers: HomePricingTier[] = (option ?? category).pricing ?? [];
+    const tier = tiers[dto.tierIndex];
+    if (!tier || !(Number(tier.price) > 0)) {
+      throw new BadRequestException('Please choose a valid option');
+    }
+
+    const planType = option ? 'MONTHLY' : 'HOURLY';
+    const { bookingDate, startTime } =
+      planType === 'HOURLY'
+        ? instantSlot()
+        : { bookingDate: toDateString(addDays(new Date(), 1)), startTime: toTimeString(tier.startTime || '08:00') };
+
+    const subtotal = round2(Number(tier.price));
+    const taxPercent = await this.settings.getNumber(
+      SETTING_KEYS.BOOKING_TAX_PERCENT,
+      0,
+    );
+    const tax = round2((subtotal * taxPercent) / 100);
+    const totalAmount = round2(subtotal + tax);
+
+    const serviceArea = address.pincode
+      ? await this.serviceAreaRepo.findOne({
+          where: { pincode: address.pincode, isActive: true },
+        })
+      : null;
+
+    const planTitle = option
+      ? `${option.title} · ${tier.label} (monthly)`
+      : `${category.title} · ${tier.label}`;
+
+    const booking = await this.bookingRepo.save(
+      this.bookingRepo.create({
+        bookingNumber: await this.generateBookingNumber(),
+        customerId,
+        addressId: address.id,
+        serviceAreaId: serviceArea?.id ?? null,
+        bookingDate,
+        startTime,
+        durationMinutes: tier.minutes ?? 240,
+        subtotal: subtotal.toFixed(2),
+        discount: '0.00',
+        tax: tax.toFixed(2),
+        totalAmount: totalAmount.toFixed(2),
+        paymentStatus: 'PENDING',
+        status: 'finding',
+        startOtp: String(randomInt(1000, 10000)),
+        notes: dto.notes ?? null,
+        planType,
+        planTitle,
+        homeCategoryId: category.id,
+        homeOptionId: option?.id ?? null,
+      }),
+    );
+
+    await this.paymentRepo.save(
+      this.paymentRepo.create({
+        bookingId: booking.id,
+        customerId,
+        amount: totalAmount.toFixed(2),
+        paymentStatus: 'PENDING',
+      }),
+    );
+
+    await this.history.record(
+      booking.id,
+      booking.status,
+      userId,
+      `Plan booked by customer: ${planTitle}`,
+    );
+
+    return this.detail(userId, booking.id);
+  }
+
   async list(userId: string, query: ListCustomerBookingsQueryDto) {
     const customerId = await this.identity.requireCustomerId(userId);
 
@@ -209,7 +314,7 @@ export class CustomerBookingsService {
         ...(query.status ? { status: query.status } : {}),
         ...dateRangeWhere(query.from, query.to),
       },
-      relations: ['items', 'items.service', 'agent'],
+      relations: ['items', 'items.service', 'agent', 'address'],
       order: { bookingDate: 'DESC', startTime: 'DESC', createdAt: 'DESC' },
       ...skipTake(query),
     });
@@ -222,7 +327,21 @@ export class CustomerBookingsService {
       bookingDate: booking.bookingDate,
       startTime: booking.startTime,
       totalAmount: Number(booking.totalAmount),
-      services: (booking.items ?? []).map((item) => item.service?.name ?? ''),
+      durationMinutes: booking.durationMinutes,
+      planType: booking.planType,
+      planTitle: booking.planTitle,
+      startOtp: booking.startOtp,
+      createdAt: booking.createdAt,
+      address: booking.address
+        ? [booking.address.addressLine1, booking.address.city]
+            .filter(Boolean)
+            .join(', ')
+        : null,
+      services: booking.items?.length
+        ? booking.items.map((item) => item.service?.name ?? '')
+        : booking.planTitle
+          ? [booking.planTitle]
+          : [],
       agent: booking.agent
         ? {
             agentId: booking.agent.id,
@@ -255,6 +374,8 @@ export class CustomerBookingsService {
       tax: Number(booking.tax),
       totalAmount: Number(booking.totalAmount),
       notes: booking.notes,
+      planType: booking.planType,
+      planTitle: booking.planTitle,
       // Handed to the agent on arrival to start the job.
       startOtp: booking.startOtp,
       serviceAreaId: booking.serviceAreaId,
@@ -561,6 +682,24 @@ function toDateString(date: Date) {
 /** `time` columns are stored as 'HH:MM:SS'. */
 function toTimeString(value: string) {
   return value.length === 5 ? `${value}:00` : value;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+/** Now + 15 minutes, rounded up to the next 5 minutes. */
+function instantSlot() {
+  const slot = new Date(Date.now() + 15 * 60_000);
+  slot.setSeconds(0, 0);
+  slot.setMinutes(Math.ceil(slot.getMinutes() / 5) * 5);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return {
+    bookingDate: toDateString(slot),
+    startTime: `${pad(slot.getHours())}:${pad(slot.getMinutes())}:00`,
+  };
 }
 
 function agentName(firstName: string, lastName: string | null) {

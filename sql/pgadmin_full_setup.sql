@@ -119,6 +119,7 @@ CREATE TABLE agents (
     status VARCHAR(30) DEFAULT 'PENDING',
     approval_status VARCHAR(30) DEFAULT 'PENDING',
     joining_date DATE,
+    boost_enabled BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -346,6 +347,30 @@ CREATE TABLE agent_bank_accounts (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE skills (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code VARCHAR(80) UNIQUE NOT NULL,
+    name VARCHAR(120) NOT NULL,
+    category VARCHAR(80) NOT NULL,
+    training_track VARCHAR(80) NOT NULL,
+    description TEXT DEFAULT '',
+    match_keywords TEXT DEFAULT '',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE agent_skills (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id UUID NOT NULL REFERENCES agents(id),
+    skill_id UUID NOT NULL REFERENCES skills(id),
+    selected BOOLEAN DEFAULT FALSE,
+    training_status VARCHAR(30) DEFAULT 'UNVERIFIED',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (agent_id, skill_id)
+);
+
 -- 7. Payments + earnings
 CREATE TABLE payments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -509,11 +534,12 @@ CREATE INDEX idx_agent_locations_agent_id ON agent_locations(agent_id);
 CREATE INDEX idx_agent_locations_booking_id ON agent_locations(booking_id);
 CREATE INDEX idx_agent_earnings_agent_id ON agent_earnings(agent_id);
 CREATE INDEX idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX idx_agent_skills_agent_id ON agent_skills(agent_id);
 CREATE INDEX idx_support_tickets_user_id ON support_tickets(user_id);
 
 -- App role privileges (safe if you ran SECTION B as postgres)
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO cladmin;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cladmin;
 
--- Done. 34 tables: identity, auth, catalog, bookings, agent ops, payments,
--- earnings, ratings, notifications, support, coupons, audit, settings.
+-- Done. 36 tables: identity, auth, catalog, bookings, agent ops, skills,
+-- payments, earnings, ratings, notifications, support, coupons, audit, settings.

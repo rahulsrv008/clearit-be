@@ -5,6 +5,7 @@ import { Agent, AgentBankAccount, AgentDocument } from 'src/database/entities';
 import { AgentContextService } from '../shared/agent-context.service';
 import { CreateAgentRegistrationDto } from './dto/create-registration.dto';
 import { UpdateAgentPersonalDetailsDto } from './dto/update-personal-details.dto';
+import { SaveAgentAddressDto } from './dto/save-address.dto';
 import {
   isRegistrationComplete,
   missingSteps,
@@ -55,6 +56,24 @@ export class AgentRegistrationService {
     return this.status(userId);
   }
 
+  async saveAddress(userId: string, dto: SaveAgentAddressDto) {
+    const agent = await this.context.requireAgent(userId);
+    this.assertEditable(agent);
+
+    agent.addressLine1 = dto.addressLine1;
+    agent.locality = dto.locality ?? null;
+    agent.city = dto.city;
+    agent.state = dto.state ?? null;
+    agent.pincode = dto.pincode ?? null;
+    agent.latitude =
+      dto.latitude === undefined ? agent.latitude : dto.latitude.toFixed(7);
+    agent.longitude =
+      dto.longitude === undefined ? agent.longitude : dto.longitude.toFixed(7);
+
+    await this.agentRepo.save(agent);
+    return this.status(userId);
+  }
+
   async status(userId: string) {
     const agent = await this.context.requireAgent(userId);
 
@@ -82,6 +101,15 @@ export class AgentRegistrationService {
       nextStep: resolveNextStep(steps, agent.approvalStatus),
       isRegistrationComplete: isRegistrationComplete(steps),
       requiredDocumentTypes: [...REQUIRED_DOCUMENT_TYPES],
+      address: {
+        addressLine1: agent.addressLine1,
+        locality: agent.locality,
+        city: agent.city,
+        state: agent.state,
+        pincode: agent.pincode,
+        latitude: agent.latitude === null ? null : Number(agent.latitude),
+        longitude: agent.longitude === null ? null : Number(agent.longitude),
+      },
       documents: documents.map((document) => ({
         documentType: document.documentType,
         verificationStatus: document.verificationStatus,

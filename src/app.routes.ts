@@ -21,6 +21,7 @@ export const ROUTES = {
     RATINGS: 'customer/ratings',
     NOTIFICATIONS: 'customer/notifications',
     SUPPORT: 'customer/support',
+    HOME: 'customer/home',
   },
 
   AGENT: {
@@ -30,6 +31,8 @@ export const ROUTES = {
     DOCUMENTS: 'agent/documents',
     PROFILE: 'agent/profile',
     AVAILABILITY: 'agent/availability',
+    SKILLS: 'agent/skills',
+    BOOST: 'agent/boost',
     BOOKINGS: 'agent/bookings',
     LOCATION: 'agent/location',
     ATTENDANCE: 'agent/attendance',
@@ -61,6 +64,7 @@ export const ROUTES = {
     REPORTS: 'admin/reports',
     NOTIFICATIONS: 'admin/notifications',
     SETTINGS: 'admin/settings',
+    HOME_CONTENT: 'admin/home-content',
   },
 
   WEBHOOKS: {

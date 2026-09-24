@@ -15,6 +15,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { CustomerBookingsService } from './bookings.service';
 import { CancelCustomerBookingDto } from './dto/cancel-booking.dto';
 import { CreateCustomerBookingDto } from './dto/create-booking.dto';
+import { CreatePlanBookingDto } from './dto/create-plan-booking.dto';
 import { ListCustomerBookingsQueryDto } from './dto/list-bookings.dto';
 import { RescheduleCustomerBookingDto } from './dto/reschedule-booking.dto';
 
@@ -31,6 +32,17 @@ export class CustomerBookingsController {
     @Body() dto: CreateCustomerBookingDto,
   ) {
     return this.bookingsService.create(userId, dto);
+  }
+
+  @Post('plan')
+  @ApiOperation({
+    summary: 'Book an On Demand duration or a monthly plan shift from the home screen',
+  })
+  createPlan(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: CreatePlanBookingDto,
+  ) {
+    return this.bookingsService.createPlan(userId, dto);
   }
 
   @Get()

@@ -13,13 +13,7 @@ import {
   MoreThanOrEqual,
   Repository,
 } from 'typeorm';
-import {
-  AgentEarning,
-  Booking,
-  BookingItem,
-  CustomerAddress,
-  ServicePricing,
-} from 'src/database/entities';
+import { AgentEarning, AgentLocation, Booking, BookingItem, CustomerAddress, ServicePricing } from 'src/database/entities';
 import { BookingHistoryService } from 'src/common/booking/booking-history.service';
 import { NotificationDispatchService } from 'src/common/services/notification-dispatch.service';
 import {
@@ -27,7 +21,9 @@ import {
   SettingsService,
 } from 'src/common/services/settings.service';
 import { paginated, skipTake } from 'src/common/dto/pagination.dto';
+import { SmsService } from 'src/integrations/sms/sms.service';
 import { AgentContextService } from '../shared/agent-context.service';
+import { AgentSkillsService } from '../skills/skills.service';
 import { todayString, toTimeString } from '../shared/date.util';
 import { ListAgentBookingsDto } from './dto/list-bookings.dto';
 import { RejectAgentBookingDto } from './dto/reject-booking.dto';
@@ -49,10 +45,14 @@ export class AgentBookingsService {
     private readonly earningRepo: Repository<AgentEarning>,
     @InjectRepository(ServicePricing)
     private readonly pricingRepo: Repository<ServicePricing>,
+    @InjectRepository(AgentLocation)
+    private readonly locationRepo: Repository<AgentLocation>,
     private readonly context: AgentContextService,
+    private readonly skills: AgentSkillsService,
     private readonly history: BookingHistoryService,
     private readonly notifications: NotificationDispatchService,
     private readonly settings: SettingsService,
+    private readonly sms: SmsService,
   ) {}
 
   async list(userId: string, query: ListAgentBookingsDto) {
@@ -96,11 +96,13 @@ export class AgentBookingsService {
       ...skipTake(query),
     });
 
-    return paginated(
-      rows.map((booking) => this.toListItem(booking, agent.id)),
-      total,
-      query,
-    );
+    const items = rows.map((booking) => this.toListItem(booking, agent.id));
+    if (scope !== 'available') {
+      return paginated(items, total, query);
+    }
+
+    const matched = await this.filterAvailableJobs(agent.id, items);
+    return paginated(matched, matched.length, query);
   }
 
   async detail(userId: string, bookingId: string) {
@@ -156,11 +158,22 @@ export class AgentBookingsService {
     const booking = await this.requireBooking(bookingId);
     await this.history.transition(booking, 'accepted', userId);
 
+    const agentName = agent.firstName || 'Your expert';
+    const otpLine = booking.startOtp
+      ? ` Share start OTP ${booking.startOtp} when they arrive.`
+      : '';
     await this.notifyCustomer(booking, {
-      title: 'Agent assigned',
-      message: `${agent.firstName || 'Your agent'} has accepted booking ${booking.bookingNumber}.`,
+      title: 'Expert assigned',
+      message: `${agentName} has accepted booking ${booking.bookingNumber}.${otpLine}`,
       type: 'booking_accepted',
     });
+    const customerMobile = booking.customer?.user?.mobile;
+    if (customerMobile && booking.startOtp) {
+      await this.sms.send(
+        customerMobile,
+        `ClearIt: ${agentName} will serve booking ${booking.bookingNumber}. Share start OTP ${booking.startOtp} only when your expert arrives.`,
+      );
+    }
 
     return this.toStatusResponse(booking);
   }
@@ -361,6 +374,9 @@ export class AgentBookingsService {
 
   private toListItem(booking: Booking, agentId: string) {
     const isMine = booking.agentId === agentId;
+    const services = (booking.items ?? [])
+      .map((item) => item.service?.name)
+      .filter((name): name is string => !!name);
     return {
       id: booking.id,
       bookingNumber: booking.bookingNumber,
@@ -369,9 +385,9 @@ export class AgentBookingsService {
       startTime: booking.startTime,
       durationMinutes: booking.durationMinutes,
       totalAmount: Number(booking.totalAmount),
-      services: (booking.items ?? [])
-        .map((item) => item.service?.name)
-        .filter((name): name is string => !!name),
+      planType: booking.planType,
+      planTitle: booking.planTitle,
+      services: services.length || !booking.planTitle ? services : [booking.planTitle],
       address: this.toAddress(booking.address, isMine),
       customerFirstName: booking.customer?.firstName ?? null,
       isAssignedToMe: isMine,
@@ -405,6 +421,47 @@ export class AgentBookingsService {
       status: booking.status,
     };
   }
+
+  /**
+   * Open pool is filtered by verified skills, then by last-known location vs
+   * the 3 km (or 5 km boosted) radius. Jobs without coordinates stay visible.
+   */
+  private async filterAvailableJobs<
+    T extends {
+      id: string;
+      services: string[];
+      planType: Booking['planType'];
+      address: { latitude?: number | null; longitude?: number | null } | null;
+    },
+  >(agentId: string, jobs: T[]) {
+    const match = await this.skills.matchingContext(agentId);
+    // On Demand is general help by the hour, so any approved agent can take it.
+    const bySkill = jobs.filter(
+      (job) =>
+        job.planType === 'HOURLY' ||
+        job.services.some((name) => matchesSkill(name, match.keywords)),
+    );
+
+    const ping = await this.locationRepo.findOne({
+      where: { agentId },
+      order: { recordedAt: 'DESC' },
+    });
+    if (!ping) return bySkill.map((job) => ({ ...job, distanceKm: null }));
+
+    const origin = { lat: Number(ping.latitude), lng: Number(ping.longitude) };
+    return bySkill
+      .map((job) => {
+        const lat = job.address?.latitude;
+        const lng = job.address?.longitude;
+        const distanceKm =
+          lat != null && lng != null ? haversineKm(origin.lat, origin.lng, lat, lng) : null;
+        return { ...job, distanceKm };
+      })
+      .filter(
+        (job) =>
+          job.distanceKm == null || job.distanceKm <= match.serviceRadiusKm,
+      );
+  }
 }
 
 function buildDateFilter(from?: string, to?: string) {
@@ -412,4 +469,21 @@ function buildDateFilter(from?: string, to?: string) {
   if (from) return MoreThanOrEqual(from);
   if (to) return LessThanOrEqual(to);
   return undefined;
+}
+
+function matchesSkill(serviceName: string, keywords: string[]) {
+  const haystack = serviceName.toLowerCase();
+  return keywords.some(
+    (keyword) => haystack.includes(keyword) || keyword.includes(haystack),
+  );
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }

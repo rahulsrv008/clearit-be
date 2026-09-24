@@ -65,7 +65,21 @@ async function bootstrap() {
     : [`http://localhost:${port}`];
 
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // React Native / Expo Go do not send Origin. LAN Expo web does.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        return callback(null, true);
+      }
+      if (
+        /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        )
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
       'Origin',
@@ -139,7 +153,7 @@ async function bootstrap() {
   try {
     await initializeConnection();
     customLoggerService.log('Data Source has been initialized!', 'bootstrap');
-    await app.listen(port);
+    await app.listen(port, '0.0.0.0');
     customLoggerService.log(
       `Application is running on: ${await app.getUrl()}`,
       'bootstrap',
@@ -151,7 +165,7 @@ async function bootstrap() {
       'bootstrap',
     );
     // Still listen so /health can report degraded DB when credentials are missing during setup
-    await app.listen(port);
+    await app.listen(port, '0.0.0.0');
     customLoggerService.warn(
       `App listening on port ${port} without DB (fill .env and restart)`,
       'bootstrap',

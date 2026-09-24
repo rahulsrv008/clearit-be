@@ -35,3 +35,15 @@ export { SupportTicket } from './support-ticket';
 export { Coupon } from './coupon';
 export { CouponUsage } from './coupon-usage';
 export { AuditLog } from './audit-log';
+export { Skill } from './skill';
+export { AgentSkill } from './agent-skill';
+export type { SkillTrainingStatus } from './agent-skill';
+export { HomeCategory } from './home-category';
+export type {
+  HomeCategoryAction,
+  HomeHighlight,
+  HomePricingTier,
+  HomeTileLayout,
+} from './home-category';
+export { HomeCategoryOption } from './home-category-option';
+export { HomePopularItem } from './home-popular-item';

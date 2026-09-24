@@ -37,6 +37,7 @@ interface BookingListRow {
   status: string;
   paymentStatus: string;
   totalAmount: string;
+  planTitle: string | null;
 }
 
 /** Statuses that still occupy an agent's calendar slot. */
@@ -93,6 +94,7 @@ export class AdminBookingsService {
       .addSelect('booking.status', 'status')
       .addSelect('booking.paymentStatus', 'paymentStatus')
       .addSelect('booking.totalAmount', 'totalAmount')
+      .addSelect('booking.planTitle', 'planTitle')
       .orderBy('booking.bookingDate', 'DESC')
       .addOrderBy('booking.startTime', 'DESC')
       .offset(skip)
@@ -129,6 +131,7 @@ export class AdminBookingsService {
         status: row.status,
         paymentStatus: row.paymentStatus,
         totalAmount: Number(row.totalAmount),
+        planTitle: row.planTitle,
       })),
       total,
       query,
@@ -170,6 +173,8 @@ export class AdminBookingsService {
       status: booking.status,
       paymentStatus: booking.paymentStatus,
       notes: booking.notes,
+      planType: booking.planType,
+      planTitle: booking.planTitle,
       amounts: {
         subtotal: Number(booking.subtotal),
         discount: Number(booking.discount),

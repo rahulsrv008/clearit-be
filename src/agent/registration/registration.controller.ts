@@ -6,6 +6,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { AgentRegistrationService } from './registration.service';
 import { CreateAgentRegistrationDto } from './dto/create-registration.dto';
 import { UpdateAgentPersonalDetailsDto } from './dto/update-personal-details.dto';
+import { SaveAgentAddressDto } from './dto/save-address.dto';
 
 @ApiTags('agent')
 @AgentAuth()
@@ -31,6 +32,15 @@ export class AgentRegistrationController {
     @Body() dto: UpdateAgentPersonalDetailsDto,
   ) {
     return this.registrationService.updatePersonalDetails(userId, dto);
+  }
+
+  @Patch('address')
+  @ApiOperation({ summary: 'Save live location and address captured on the map' })
+  saveAddress(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: SaveAgentAddressDto,
+  ) {
+    return this.registrationService.saveAddress(userId, dto);
   }
 
   @Get('status')

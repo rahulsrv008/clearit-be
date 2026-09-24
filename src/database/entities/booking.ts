@@ -112,6 +112,19 @@ export class Booking {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  /** Set for bookings made from customer home plans instead of catalog services. */
+  @Column({ name: 'plan_type', type: 'varchar', length: 20, nullable: true })
+  planType: 'HOURLY' | 'MONTHLY' | null;
+
+  @Column({ name: 'plan_title', type: 'varchar', length: 200, nullable: true })
+  planTitle: string | null;
+
+  @Column({ name: 'home_category_id', type: 'uuid', nullable: true })
+  homeCategoryId: string | null;
+
+  @Column({ name: 'home_option_id', type: 'uuid', nullable: true })
+  homeOptionId: string | null;
+
   @OneToMany(() => BookingItem, (item) => item.booking)
   items: BookingItem[];
 

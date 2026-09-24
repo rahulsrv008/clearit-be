@@ -11,6 +11,7 @@ import { AgentEarningsModule } from './earnings/earnings.module';
 import { AgentRatingsModule } from './ratings/ratings.module';
 import { AgentNotificationsModule } from './notifications/notifications.module';
 import { AgentSupportModule } from './support/support.module';
+import { AgentSkillsModule } from './skills/skills.module';
 
 /** Agent Mobile App — everything under /api/v1/agent/*. */
 @Module({
@@ -20,6 +21,7 @@ import { AgentSupportModule } from './support/support.module';
     AgentDocumentsModule,
     AgentProfileModule,
     AgentAvailabilityModule,
+    AgentSkillsModule,
     AgentBookingsModule,
     AgentLocationModule,
     AgentAttendanceModule,

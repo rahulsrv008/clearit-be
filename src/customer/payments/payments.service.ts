@@ -50,6 +50,10 @@ export class CustomerPaymentsService {
     }
 
     const payment = await this.ensurePayment(booking, customerId);
+    if (dto.paymentMethod) {
+      payment.paymentMethod = dto.paymentMethod;
+      await this.paymentRepo.save(payment);
+    }
     const order = this.razorpay.createOrder(amountPaise, booking.bookingNumber);
 
     await this.transactionRepo.save(

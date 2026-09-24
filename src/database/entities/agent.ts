@@ -19,6 +19,7 @@ import { AgentEarning } from './agent-earning';
 import { AgentIncentive } from './agent-incentive';
 import { SalaryRecord } from './salary-record';
 import { Rating } from './rating';
+import { AgentSkill } from './agent-skill';
 
 @Entity('agents')
 export class Agent {
@@ -56,6 +57,30 @@ export class Agent {
   @Column({ name: 'joining_date', type: 'date', nullable: true })
   joiningDate: string | null;
 
+  @Column({ name: 'boost_enabled', type: 'boolean', default: false })
+  boostEnabled: boolean;
+
+  @Column({ name: 'address_line1', type: 'varchar', length: 255, nullable: true })
+  addressLine1: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  locality: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  city: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  state: string | null;
+
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  pincode: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
+  latitude: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
+  longitude: string | null;
+
   @OneToMany(() => Booking, (booking) => booking.agent)
   bookings: Booking[];
 
@@ -85,6 +110,9 @@ export class Agent {
 
   @OneToMany(() => Rating, (rating) => rating.agent)
   ratings: Rating[];
+
+  @OneToMany(() => AgentSkill, (row) => row.agent)
+  skills: AgentSkill[];
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

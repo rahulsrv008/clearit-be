@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { MEDIA_REF_MESSAGE, MEDIA_REF_REGEX } from 'src/common/utils/validation';
 
 /** Document kinds the KYC screen can submit. */
 export const AGENT_DOCUMENT_TYPES = [
@@ -8,6 +9,7 @@ export const AGENT_DOCUMENT_TYPES = [
   'DRIVING_LICENSE',
   'POLICE_VERIFICATION',
   'PHOTO',
+  'PASSBOOK',
 ] as const;
 
 export class UploadAgentDocumentDto {
@@ -22,8 +24,9 @@ export class UploadAgentDocumentDto {
   documentNumber?: string;
 
   @ApiProperty({
-    description: 'Public URL the mobile app uploaded the scan to',
+    description: 'Photo from camera/gallery (data URL) or a hosted image URL',
   })
-  @IsUrl()
+  @IsString()
+  @Matches(MEDIA_REF_REGEX, { message: MEDIA_REF_MESSAGE })
   documentUrl: string;
 }
