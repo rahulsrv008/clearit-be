@@ -12,6 +12,11 @@ export const SETTING_KEYS = {
   AGENT_INCENTIVE_THRESHOLD: 'agent_incentive_threshold',
   AGENT_INCENTIVE_PERCENT: 'agent_incentive_percent',
   BOOKING_CANCELLATION_WINDOW_MINUTES: 'booking_cancellation_window_minutes',
+  COOK_MORNING_PER_PERSON: 'cook_morning_per_person',
+  COOK_EVENING_PER_PERSON: 'cook_evening_per_person',
+  COOK_BOTH_PER_PERSON: 'cook_both_per_person',
+  COOK_EXTRA_PERSON_DISCOUNT_PERCENT: 'cook_extra_person_discount_percent',
+  COOK_CLEANING_MONTHLY: 'cook_cleaning_monthly',
 } as const;
 
 const CACHE_TTL_MS = 30_000;

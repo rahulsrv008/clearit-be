@@ -238,19 +238,38 @@ export class CustomerBookingsService {
       throw new BadRequestException('Please choose a valid option');
     }
 
-    const planType = option ? 'MONTHLY' : 'HOURLY';
+    // Shift tiers carry a start time; duration tiers are On Demand.
+    const planType = tier.startTime ? 'MONTHLY' : 'HOURLY';
     const { bookingDate, startTime } =
       planType === 'HOURLY'
-        ? instantSlot()
-        : { bookingDate: toDateString(addDays(new Date(), 1)), startTime: toTimeString(tier.startTime || '08:00') };
+        ? scheduledSlot(dto.bookingDate, dto.startTime)
+        : {
+            bookingDate: planStartDate(dto.bookingDate),
+            startTime: toTimeString(tier.startTime || '08:00'),
+          };
 
-    const subtotal = round2(Number(tier.price));
+    const serviceName = option?.title ?? category.title;
+    const cook = isCookService(serviceName)
+      ? cookCharge(
+          dto.personCount ?? 1,
+          await this.cookRate(tier.label),
+          await this.settings.getNumber(
+            SETTING_KEYS.COOK_EXTRA_PERSON_DISCOUNT_PERCENT,
+            10,
+          ),
+          includesCleaning(serviceName)
+            ? await this.settings.getNumber(SETTING_KEYS.COOK_CLEANING_MONTHLY, 1200)
+            : 0,
+        )
+      : null;
+    const subtotal = cook ? cook.gross : round2(Number(tier.price));
+    const discount = cook ? cook.discount : 0;
     const taxPercent = await this.settings.getNumber(
       SETTING_KEYS.BOOKING_TAX_PERCENT,
       0,
     );
-    const tax = round2((subtotal * taxPercent) / 100);
-    const totalAmount = round2(subtotal + tax);
+    const tax = round2(((subtotal - discount) * taxPercent) / 100);
+    const totalAmount = round2(subtotal - discount + tax);
 
     const serviceArea = address.pincode
       ? await this.serviceAreaRepo.findOne({
@@ -258,9 +277,13 @@ export class CustomerBookingsService {
         })
       : null;
 
-    const planTitle = option
-      ? `${option.title} · ${tier.label} (monthly)`
-      : `${category.title} · ${tier.label}`;
+    const peopleLabel = cook
+      ? ` · ${cook.count} ${cook.count === 1 ? 'person' : 'people'}`
+      : '';
+    const planTitle =
+      planType === 'MONTHLY'
+        ? `${serviceName} · ${tier.label}${peopleLabel} (monthly)`
+        : `${serviceName} · ${tier.label}`;
 
     const booking = await this.bookingRepo.save(
       this.bookingRepo.create({
@@ -272,7 +295,7 @@ export class CustomerBookingsService {
         startTime,
         durationMinutes: tier.minutes ?? 240,
         subtotal: subtotal.toFixed(2),
-        discount: '0.00',
+        discount: discount.toFixed(2),
         tax: tax.toFixed(2),
         totalAmount: totalAmount.toFixed(2),
         paymentStatus: 'PENDING',
@@ -646,6 +669,18 @@ export class CustomerBookingsService {
     return { coupon, discount: round2(Math.min(discount, subtotal)) };
   }
 
+  /** Per-person cook rate for the chosen shift. One shift is morning or evening; both is its own rate. */
+  private async cookRate(label: string) {
+    const value = label.toLowerCase();
+    if (value.includes('both')) {
+      return this.settings.getNumber(SETTING_KEYS.COOK_BOTH_PER_PERSON, 2000);
+    }
+    if (value.includes('evening')) {
+      return this.settings.getNumber(SETTING_KEYS.COOK_EVENING_PER_PERSON, 1200);
+    }
+    return this.settings.getNumber(SETTING_KEYS.COOK_MORNING_PER_PERSON, 1200);
+  }
+
   /** `CL` + yymmdd + 5 random digits, retried until it is unique. */
   private async generateBookingNumber() {
     const now = new Date();
@@ -664,6 +699,41 @@ export class CustomerBookingsService {
       'Could not allocate a booking number, please retry',
     );
   }
+}
+
+/** Cook plans, including Cook + Cleaning, are priced per person. */
+function isCookService(title: string) {
+  return /\bcook\b/i.test(title);
+}
+
+function includesCleaning(title: string) {
+  return /clean/i.test(title);
+}
+
+/** First person pays the full cook rate. Each extra person is discounted. Cleaning is a flat monthly add-on. */
+function cookCharge(
+  people: number,
+  perPerson: number,
+  discountPercent: number,
+  cleaningMonthly: number,
+) {
+  const count = Math.min(12, Math.max(1, Math.floor(people)));
+  const rate = round2(perPerson);
+  const percent = Math.min(100, Math.max(0, discountPercent));
+  const cleaning = round2(Math.max(0, cleaningMonthly));
+  const cooking = round2(rate * count);
+  const discount = round2(((count - 1) * rate * percent) / 100);
+  const gross = round2(cooking + cleaning);
+  return {
+    count,
+    rate,
+    percent,
+    cooking,
+    cleaning,
+    gross,
+    discount,
+    net: round2(gross - discount),
+  };
 }
 
 function round2(value: number) {
@@ -700,6 +770,37 @@ function instantSlot() {
     bookingDate: toDateString(slot),
     startTime: `${pad(slot.getHours())}:${pad(slot.getMinutes())}:00`,
   };
+}
+
+const MAX_ADVANCE_DAYS = 30;
+
+/** A customer-picked slot at least 30 minutes out, otherwise the instant slot. */
+function scheduledSlot(date?: string, time?: string) {
+  if (!date || !time) return instantSlot();
+  const slot = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(slot.getTime())) {
+    throw new BadRequestException('Please choose a valid date and time');
+  }
+  if (slot.getTime() < Date.now() + 30 * 60_000) {
+    throw new BadRequestException('Please pick a time at least 30 minutes from now');
+  }
+  if (slot.getTime() > addDays(new Date(), MAX_ADVANCE_DAYS).getTime()) {
+    throw new BadRequestException(`You can book up to ${MAX_ADVANCE_DAYS} days ahead`);
+  }
+  return { bookingDate: date, startTime: `${time}:00` };
+}
+
+/** Monthly plans start tomorrow at the earliest. */
+function planStartDate(date?: string) {
+  const tomorrow = toDateString(addDays(new Date(), 1));
+  if (!date) return tomorrow;
+  if (date < tomorrow) {
+    throw new BadRequestException('Monthly plans can start from tomorrow');
+  }
+  if (date > toDateString(addDays(new Date(), MAX_ADVANCE_DAYS))) {
+    throw new BadRequestException(`Plans can start up to ${MAX_ADVANCE_DAYS} days ahead`);
+  }
+  return date;
 }
 
 function agentName(firstName: string, lastName: string | null) {

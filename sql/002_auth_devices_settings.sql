@@ -55,5 +55,10 @@ INSERT INTO system_settings (setting_key, setting_value, description) VALUES
   ('agent_fixed_salary', '12000'::jsonb, 'Monthly fixed salary used when generating salary records'),
   ('agent_incentive_threshold', '15000'::jsonb, 'Monthly revenue an agent must generate before incentives apply'),
   ('agent_incentive_percent', '10'::jsonb, 'Incentive percentage on revenue above the threshold'),
-  ('booking_cancellation_window_minutes', '60'::jsonb, 'Minutes before start time a customer may cancel free of charge')
+  ('booking_cancellation_window_minutes', '60'::jsonb, 'Minutes before start time a customer may cancel free of charge'),
+  ('cook_morning_per_person', '1200'::jsonb, 'Cook charge per person for the morning shift, in rupees'),
+  ('cook_evening_per_person', '1200'::jsonb, 'Cook charge per person for the evening shift, in rupees'),
+  ('cook_both_per_person', '2000'::jsonb, 'Cook charge per person when both morning and evening are booked, in rupees'),
+  ('cook_extra_person_discount_percent', '10'::jsonb, 'Percent off the per-person cook rate for each person after the first'),
+  ('cook_cleaning_monthly', '1200'::jsonb, 'Flat monthly cleaning add-on on Cook + Cleaning, in rupees')
 ON CONFLICT (setting_key) DO NOTHING;
