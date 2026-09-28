@@ -65,6 +65,16 @@ export async function createServer(listen = !process.env.VERCEL) {
   );
   app.use(urlencoded({ extended: true, limit: '10mb' }));
 
+  // Vercel rewrites the real path as ?__path=. The strict query pipe treats
+  // that extra field as invalid and returns 400 on routes like /admin/dashboard.
+  app.use((req, _res, next) => {
+    const query = req.query as Record<string, unknown> | undefined;
+    if (query && Object.prototype.hasOwnProperty.call(query, '__path')) {
+      delete query.__path;
+    }
+    next();
+  });
+
   app.setGlobalPrefix(ROUTES.API_PREFIX, {
     exclude: [
       { path: '', method: RequestMethod.GET },
