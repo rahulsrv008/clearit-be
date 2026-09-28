@@ -2,7 +2,9 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import * as path from 'path';
 
 export const typeOrmConfig = (): TypeOrmModuleOptions => {
-  const poolMax = parseInt(process.env.DB_POOL_MAX ?? '25', 10);
+  const poolMax = process.env.VERCEL
+    ? 1
+    : parseInt(process.env.DB_POOL_MAX ?? '25', 10);
   const useSsl = (process.env.DB_SSL ?? 'true').toLowerCase() !== 'false';
 
   return {
@@ -13,6 +15,7 @@ export const typeOrmConfig = (): TypeOrmModuleOptions => {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     schema: process.env.DB_SCHEMA || 'public',
+    autoLoadEntities: true,
     entities: [path.join(__dirname, '../database/entities/*.{ts,js}')],
     ssl: useSsl
       ? {

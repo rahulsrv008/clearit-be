@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
@@ -20,7 +21,8 @@ import { ensureLogDir, LOG_DIR } from './logger/log-paths';
 import { CustomLoggerService } from './common/utils/logger.service';
 import { ROUTES } from './app.routes';
 
-async function bootstrap() {
+/** Boots Nest. On Vercel this returns the Express app and does not listen. */
+export async function createServer(listen = !process.env.VERCEL) {
   const appEnv = loadEnvFiles();
   validateEnv(appEnv);
 
@@ -28,7 +30,7 @@ async function bootstrap() {
     logger: WinstonModule.createLogger(createWinstonLoggerOptions()),
   });
 
-  ensureLogDir();
+  if (!process.env.VERCEL) ensureLogDir();
   const customLoggerService = app.get(CustomLoggerService);
 
   const expressApp = app.getHttpAdapter().getInstance() as {
@@ -44,8 +46,11 @@ async function bootstrap() {
   );
   app.use(compression());
 
-  const accessLog = path.resolve(process.cwd(), LOG_DIR, 'access.log');
-  const logStream = fs.createWriteStream(accessLog, { flags: 'a' });
+  const logStream = process.env.VERCEL
+    ? process.stdout
+    : fs.createWriteStream(path.resolve(process.cwd(), LOG_DIR, 'access.log'), {
+        flags: 'a',
+      });
   app.use(
     morgan(process.env.MORGAN_FORMAT || 'combined', { stream: logStream }),
   );
@@ -172,6 +177,11 @@ async function bootstrap() {
     });
   }
 
+  if (!listen) {
+    await app.init();
+    return app.getHttpAdapter().getInstance();
+  }
+
   try {
     await app.listen(port, '0.0.0.0');
     customLoggerService.log(
@@ -192,4 +202,6 @@ async function bootstrap() {
   }
 }
 
-void bootstrap();
+if (!process.env.VERCEL) {
+  void createServer(true);
+}

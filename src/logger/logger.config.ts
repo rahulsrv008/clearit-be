@@ -16,19 +16,29 @@ function dailyRotateFileOptions(
 }
 
 export function createWinstonLoggerOptions() {
+  const consoleTransport = new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      nestWinstonModuleUtilities.format.nestLike('clearit-be', {
+        prettyPrint: true,
+      }),
+    ),
+  });
+
+  // Vercel’s filesystem is read-only except /tmp. File rotation crashes the function.
+  if (process.env.VERCEL) {
+    return {
+      level: process.env.LOG_LEVEL || 'info',
+      transports: [consoleTransport],
+    };
+  }
+
   ensureLogDir();
 
   return {
     level: process.env.LOG_LEVEL || 'info',
     transports: [
-      new winston.transports.Console({
-        format: winston.format.combine(
-          winston.format.timestamp(),
-          nestWinstonModuleUtilities.format.nestLike('clearit-be', {
-            prettyPrint: true,
-          }),
-        ),
-      }),
+      consoleTransport,
       new DailyRotateFile({
         ...dailyRotateFileOptions('error'),
         level: 'error',
