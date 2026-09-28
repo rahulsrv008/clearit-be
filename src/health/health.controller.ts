@@ -1,7 +1,8 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { HealthService } from './health.service';
-import { ROUTES } from 'src/app.routes';
+import { firstValueFrom } from 'rxjs';
+import { HealthService, HealthPayload } from './health.service';
+import { ROUTES } from '../app.routes';
 
 @ApiTags('health')
 @Controller(ROUTES.HEALTH)
@@ -9,8 +10,14 @@ export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Liveness + database connectivity' })
-  health() {
-    return this.healthService.getHealthStatus();
+  @ApiOperation({ summary: 'Readiness — database connectivity' })
+  async health() {
+    const body = (await firstValueFrom(
+      this.healthService.getHealthStatus(),
+    )) as HealthPayload;
+    if (body.status !== 'ok') {
+      throw new HttpException(body, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return body;
   }
 }

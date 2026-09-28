@@ -11,7 +11,8 @@
     "start": "nest start",
     "start:dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/main.ts",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/src/main",
+    "start:stg": "NODE_ENV=staging node dist/main.js",
+    "start:prod": "NODE_ENV=production node dist/main.js",
     "seed:admin": "ts-node -r tsconfig-paths/register src/database/seeds/create-admin.ts",
     "postman:generate": "node scripts/generate-postman-collection.mjs",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix"
@@ -29,6 +30,7 @@
     "compression": "^1.8.0",
     "dotenv": "^17.4.0",
     "express": "^5.1.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "nest-winston": "^1.10.2",
@@ -56,5 +58,8 @@
     "ts-node-dev": "^2.0.0",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

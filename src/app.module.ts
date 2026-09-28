@@ -14,7 +14,15 @@ import { AdminModule } from './admin/admin.module';
 @Module({
   imports: [
     LoggerModule,
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? ['.env.production', '.env']
+          : process.env.NODE_ENV === 'staging'
+            ? ['.env.stg', '.env']
+            : ['.env'],
+    }),
     DatabaseModule,
     IntegrationsModule,
     CommonModule,

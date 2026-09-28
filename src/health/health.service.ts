@@ -3,17 +3,25 @@ import { DataSource } from 'typeorm';
 import * as os from 'os';
 import { from, of, Observable } from 'rxjs';
 import { map, catchError } from 'rxjs/operators';
-import { CustomLoggerService } from 'src/common/utils/logger.service';
-import { appVersion } from 'src/common/utils/version';
+import { appVersion } from '../common/utils/version';
+import { resolveAppEnv } from '../config/env';
+
+export type HealthPayload = {
+  status: 'ok' | 'degraded';
+  env: string;
+  timestamp: Date;
+  appVersion: string;
+  startedAt: Date;
+  osUpTime: number;
+  appUpTime: number;
+  database: { dbStatus: string; dbError?: string };
+};
 
 @Injectable()
 export class HealthService {
   started = new Date();
 
-  constructor(
-    private readonly customLoggerService: CustomLoggerService,
-    private readonly dataSource: DataSource,
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   private checkDbConnection(): Observable<{
     dbStatus: string;
@@ -34,16 +42,13 @@ export class HealthService {
     );
   }
 
-  getHealthStatus(): Observable<unknown> {
+  getHealthStatus(): Observable<HealthPayload> {
     const timestamp = new Date();
-    this.customLoggerService.log(
-      `Health check at ${timestamp.toISOString()}`,
-      'HealthService',
-    );
 
     return this.checkDbConnection().pipe(
       map((dbInfo) => ({
         status: dbInfo.dbStatus === 'connected' ? 'ok' : 'degraded',
+        env: resolveAppEnv(),
         timestamp,
         appVersion,
         startedAt: this.started,

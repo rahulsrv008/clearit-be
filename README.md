@@ -13,7 +13,43 @@ Aligned to **CleanIt architecture / STG roadmap**: Auth OTP, Users, Addresses, B
 PostgreSQL schema is the full 32-table design (customers, agents, services, bookings, payments, earnings, coupons, support, etc.). Run `sql/001_full_schema.sql` in pgAdmin on the `clearit` database. Keep `DB_SYNC=false`.
 
 
+## Staging
+
+STG is meant to run compiled JS against the Aiven (or other hosted) Postgres, with schema applied from `sql/001_full_schema.sql` — **not** TypeORM `synchronize`.
+
+```bash
+cp .env.stg.example .env.stg
+# fill DB_*, JWT_SECRET (>= 24 chars), ALLOWED_ORIGINS, APP_URL
+npm install
+npm run build
+NODE_ENV=staging npm run start:stg
+```
+
+Or Docker:
+
+```bash
+docker build -t clearit-be:stg .
+docker run --env-file .env.stg -p 3000:3000 clearit-be:stg
+```
+
+| Check | URL |
+|---|---|
+| Liveness (load balancer) | `GET /health` |
+| Readiness (DB) | `GET /api/v1/health` — **503** if Postgres is down |
+| Swagger (STG only) | `/api` and `/docs` (`ENABLE_SWAGGER=false` in production) |
+
+Staging boot **fails fast** if `DB_*` or `JWT_SECRET` is missing, if `JWT_SECRET` is a local default, if `ALLOWED_ORIGINS` is empty, or if `DB_SYNC=true`.
+
+CORS in staging/production only allows origins listed in `ALLOWED_ORIGINS` (mobile apps with no `Origin` header still pass). Apply the SQL schema in pgAdmin before the first boot.
+
+Seed an admin after the schema exists:
+
+```bash
+NODE_ENV=staging npm run seed:admin -- you@clearit.in 'A-strong-password'
+```
+
 ## Quick start
+
 
 ```bash
 cd /Users/rahulsrivastav/Desktop/clearIt/clearit-be
@@ -26,7 +62,7 @@ npm run start:dev
 - API: `http://localhost:3000` (or `PORT` from `.env`)
 - Swagger UI: `http://localhost:3000/api` (also `/docs`)
 - OpenAPI JSON: `http://localhost:3000/api-json`
-- Health: `http://localhost:3000/api/v1/health`
+- Health: `http://localhost:3000/health` (liveness) and `http://localhost:3000/api/v1/health` (DB ready)
 - Postman: import `postman/ClearIt-API.postman_collection.json` (regenerate with `npm run postman:generate`)
 
 ## `.env` keys you must fill

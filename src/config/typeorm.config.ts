@@ -19,7 +19,7 @@ export const typeOrmConfig = (): TypeOrmModuleOptions => {
           rejectUnauthorized: false,
         }
       : false,
-    synchronize: false, // keep false; create tables via SQL in pgAdmin
+    synchronize: false,
     poolSize: poolMax,
     extra: {
       max: poolMax,

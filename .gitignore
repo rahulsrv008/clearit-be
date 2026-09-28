@@ -25,6 +25,8 @@ yarn-error.log*
 
 # dotenv — keep secrets local
 .env
+.env.stg
+.env.production
 .env.ppe
 .env.development.local
 .env.test.local

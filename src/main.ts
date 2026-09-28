@@ -1,40 +1,55 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
-import { initializeConnection } from './data-source';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import compression from 'compression';
+import helmet from 'helmet';
 import morgan from 'morgan';
 import fs from 'fs';
 import path from 'path';
 import { IncomingMessage } from 'http';
-import 'dotenv/config';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { PackageJson } from './common/dto/package';
-import { cwd } from 'process';
-import { SwaggerConfig } from './config/swagger.config';
-import { createWinstonLoggerOptions } from 'src/logger/logger.config';
-import { ensureLogDir } from 'src/logger/log-paths';
 import { json, urlencoded } from 'express';
+import { cwd } from 'process';
+import { AppModule } from './app.module';
+import { PackageJson } from './common/dto/package';
+import { SwaggerConfig } from './config/swagger.config';
+import { isDeployedEnv, loadEnvFiles, validateEnv } from './config/env';
+import { createWinstonLoggerOptions } from './logger/logger.config';
+import { ensureLogDir, LOG_DIR } from './logger/log-paths';
 import { CustomLoggerService } from './common/utils/logger.service';
 import { ROUTES } from './app.routes';
 
 async function bootstrap() {
+  const appEnv = loadEnvFiles();
+  validateEnv(appEnv);
+
   const app = await NestFactory.create(AppModule, {
     logger: WinstonModule.createLogger(createWinstonLoggerOptions()),
   });
 
   ensureLogDir();
-
   const customLoggerService = app.get(CustomLoggerService);
 
-  const logStream = fs.createWriteStream(path.join(__dirname, 'access.log'), {
-    flags: 'a',
-  });
+  const expressApp = app.getHttpAdapter().getInstance() as {
+    set: (key: string, value: unknown) => void;
+  };
+  expressApp.set('trust proxy', process.env.TRUST_PROXY === 'false' ? false : 1);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+  app.use(compression());
+
+  const accessLog = path.resolve(process.cwd(), LOG_DIR, 'access.log');
+  const logStream = fs.createWriteStream(accessLog, { flags: 'a' });
   app.use(
     morgan(process.env.MORGAN_FORMAT || 'combined', { stream: logStream }),
   );
-  // Razorpay webhook signatures are computed over the exact bytes we received.
+
   app.use(
     json({
       limit: '10mb',
@@ -45,7 +60,12 @@ async function bootstrap() {
   );
   app.use(urlencoded({ extended: true, limit: '10mb' }));
 
-  app.setGlobalPrefix(ROUTES.API_PREFIX, { exclude: [''] });
+  app.setGlobalPrefix(ROUTES.API_PREFIX, {
+    exclude: [
+      { path: '', method: RequestMethod.GET },
+      { path: 'health', method: RequestMethod.GET },
+    ],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -55,23 +75,25 @@ async function bootstrap() {
     }),
   );
 
-  const configService = app.get(ConfigService);
-  const port = configService.get<number>('PORT') || 3000;
+  app.enableShutdownHooks();
 
-  const allowedOrigins = configService.get<string>('ALLOWED_ORIGINS')
-    ? (configService.get<string>('ALLOWED_ORIGINS') ?? '')
-        .split(',')
-        .map((origin) => origin.trim())
-    : [`http://localhost:${port}`];
+  const configService = app.get(ConfigService);
+  const port = Number(configService.get('PORT')) || 3000;
+  const deployed = isDeployedEnv(appEnv);
+
+  const allowedOrigins = (configService.get<string>('ALLOWED_ORIGINS') ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
   app.enableCors({
     origin: (origin, callback) => {
-      // React Native / Expo Go do not send Origin. LAN Expo web does.
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
       if (
+        !deployed &&
         /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
           origin,
         )
@@ -95,81 +117,78 @@ async function bootstrap() {
     maxAge: 86400,
   });
 
-  const packageJson: PackageJson = JSON.parse(
-    fs.readFileSync(path.join(cwd(), 'package.json'), 'utf-8'),
-  ) as PackageJson;
+  const swaggerOn =
+    (process.env.ENABLE_SWAGGER ?? (appEnv === 'production' ? 'false' : 'true'))
+      .toLowerCase() !== 'false';
 
-  const config = new DocumentBuilder()
-    .setTitle('ClearIt API')
-    .setDescription(
-      [
-        packageJson.description || 'ClearIt backend',
-        '',
-        'Three app surfaces under `/api/v1`:',
-        '- **customer** — Customer Mobile (OTP auth)',
-        '- **agent** — Agent Mobile (OTP auth + job lifecycle)',
-        '- **admin** — Admin Web (email/password)',
-        '',
-        'Click **Authorize** and paste a Bearer access token from login / verify-otp.',
-        'With `OTP_DEMO_MODE=true`, OTPs are logged by the API instead of being SMS’d.',
-      ].join('\n'),
-    )
-    .setVersion(packageJson.version)
-    .addServer(`http://localhost:${port}`, 'Local')
-    .addTag('health', 'Liveness / readiness')
-    .addTag('customer', 'Customer Mobile App')
-    .addTag('agent', 'Agent Mobile App')
-    .addTag('admin', 'Admin Web')
-    .addBearerAuth(SwaggerConfig, 'access-token')
-    .build();
+  if (swaggerOn) {
+    const packageJson: PackageJson = JSON.parse(
+      fs.readFileSync(path.join(cwd(), 'package.json'), 'utf-8'),
+    ) as PackageJson;
+    const publicUrl =
+      process.env.APP_URL || process.env.STG_API_URL || `http://localhost:${port}`;
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup(ROUTES.SWAGGER, app, document, {
-    customSiteTitle: 'ClearIt API · Swagger',
-    swaggerOptions: {
+    const config = new DocumentBuilder()
+      .setTitle('ClearIt API')
+      .setDescription(
+        [
+          packageJson.description || 'ClearIt backend',
+          '',
+          `Environment: **${appEnv}**`,
+          '',
+          'Surfaces under `/api/v1`:',
+          '- **customer** — Customer Mobile (OTP auth)',
+          '- **agent** — Agent Mobile (OTP auth + job lifecycle)',
+          '- **admin** — Admin Web (email/password)',
+        ].join('\n'),
+      )
+      .setVersion(packageJson.version)
+      .addServer(publicUrl, appEnv)
+      .addServer(`http://localhost:${port}`, 'Local')
+      .addTag('health', 'Liveness / readiness')
+      .addTag('customer', 'Customer Mobile App')
+      .addTag('agent', 'Agent Mobile App')
+      .addTag('admin', 'Admin Web')
+      .addBearerAuth(SwaggerConfig, 'access-token')
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    const swaggerOpts = {
       persistAuthorization: true,
-      docExpansion: 'list',
+      docExpansion: 'list' as const,
       filter: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
+      tagsSorter: 'alpha' as const,
+      operationsSorter: 'alpha' as const,
       displayRequestDuration: true,
-    },
-    jsonDocumentUrl: `${ROUTES.SWAGGER}-json`,
-  });
-
-  // Friendly alias: /docs → same UI as /api
-  SwaggerModule.setup('docs', app, document, {
-    customSiteTitle: 'ClearIt API · Swagger',
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'list',
-      filter: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
-      displayRequestDuration: true,
-    },
-  });
+    };
+    SwaggerModule.setup(ROUTES.SWAGGER, app, document, {
+      customSiteTitle: 'ClearIt API · Swagger',
+      swaggerOptions: swaggerOpts,
+      jsonDocumentUrl: `${ROUTES.SWAGGER}-json`,
+    });
+    SwaggerModule.setup('docs', app, document, {
+      customSiteTitle: 'ClearIt API · Swagger',
+      swaggerOptions: swaggerOpts,
+    });
+  }
 
   try {
-    await initializeConnection();
-    customLoggerService.log('Data Source has been initialized!', 'bootstrap');
     await app.listen(port, '0.0.0.0');
     customLoggerService.log(
-      `Application is running on: ${await app.getUrl()}`,
+      `clearit-be (${appEnv}) listening on ${await app.getUrl()}`,
+      'bootstrap',
+    );
+    customLoggerService.log(
+      `health=/health  ready=/${ROUTES.API_PREFIX}/${ROUTES.HEALTH}`,
       'bootstrap',
     );
   } catch (err) {
     customLoggerService.error(
-      'Error during Data Source initialization',
+      'Failed to start',
       err instanceof Error ? err.stack : undefined,
       'bootstrap',
     );
-    // Still listen so /health can report degraded DB when credentials are missing during setup
-    await app.listen(port, '0.0.0.0');
-    customLoggerService.warn(
-      `App listening on port ${port} without DB (fill .env and restart)`,
-      'bootstrap',
-    );
+    process.exit(1);
   }
 }
 
