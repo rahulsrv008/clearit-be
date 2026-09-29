@@ -1,18 +1,44 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AgentEarning, Booking, ServicePricing, AgentLocation } from 'src/database/entities';
+import {
+  AgentEarning,
+  Booking,
+  ServicePricing,
+  AgentLocation,
+  ServiceChecklist,
+  ChecklistItem,
+  BookingChecklistProgress,
+  ChecklistItemProgress,
+  BookingServiceExecution,
+  BookingSettlement,
+  BookingCustomerFeedback,
+} from 'src/database/entities';
 import { AgentSharedModule } from '../shared/agent-shared.module';
 import { AgentSkillsModule } from '../skills/skills.module';
 import { AgentBookingsController } from './bookings.controller';
 import { AgentBookingsService } from './bookings.service';
+import { EnhancedBookingService } from './enhanced-booking.service';
+import { ChecklistService } from 'src/common/services/checklist.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Booking, AgentEarning, ServicePricing, AgentLocation]),
+    TypeOrmModule.forFeature([
+      Booking,
+      AgentEarning,
+      ServicePricing,
+      AgentLocation,
+      ServiceChecklist,
+      ChecklistItem,
+      BookingChecklistProgress,
+      ChecklistItemProgress,
+      BookingServiceExecution,
+      BookingSettlement,
+      BookingCustomerFeedback,
+    ]),
     AgentSharedModule,
     AgentSkillsModule,
   ],
   controllers: [AgentBookingsController],
-  providers: [AgentBookingsService],
+  providers: [AgentBookingsService, EnhancedBookingService, ChecklistService],
 })
 export class AgentBookingsModule {}

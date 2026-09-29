@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -29,6 +30,7 @@ import { ListAgentBookingsDto } from './dto/list-bookings.dto';
 import { RejectAgentBookingDto } from './dto/reject-booking.dto';
 import { StartAgentBookingDto } from './dto/start-booking.dto';
 import { CompleteAgentBookingDto } from './dto/complete-booking.dto';
+import { EnhancedBookingService } from './enhanced-booking.service';
 
 const LIST_RELATIONS = ['items', 'items.service', 'address', 'customer'];
 const DETAIL_RELATIONS = [...LIST_RELATIONS, 'customer.user', 'serviceArea'];
@@ -38,6 +40,8 @@ const DEFAULT_PAYOUT_PERCENT = 60;
 
 @Injectable()
 export class AgentBookingsService {
+  private readonly logger = new Logger(AgentBookingsService.name);
+
   constructor(
     @InjectRepository(Booking)
     private readonly bookingRepo: Repository<Booking>,
@@ -53,6 +57,7 @@ export class AgentBookingsService {
     private readonly notifications: NotificationDispatchService,
     private readonly settings: SettingsService,
     private readonly sms: SmsService,
+    private readonly enhancedBooking: EnhancedBookingService,
   ) {}
 
   async list(userId: string, query: ListAgentBookingsDto) {
@@ -98,7 +103,8 @@ export class AgentBookingsService {
 
     const items = rows.map((booking) => this.toListItem(booking, agent.id));
     if (scope !== 'available') {
-      return paginated(items, total, query);
+      const withDistance = await this.annotateDistanceKm(agent.id, items);
+      return paginated(withDistance, total, query);
     }
 
     const matched = await this.filterAvailableJobs(agent.id, items);
@@ -119,8 +125,11 @@ export class AgentBookingsService {
       throw new NotFoundException('Booking not found');
     }
 
+    const listItem = this.toListItem(booking, agent.id);
+    const [{ distanceKm }] = await this.annotateDistanceKm(agent.id, [listItem]);
+
     return {
-      ...this.toListItem(booking, agent.id),
+      ...listItem,
       notes: booking.notes,
       subtotal: Number(booking.subtotal),
       discount: Number(booking.discount),
@@ -131,6 +140,7 @@ export class AgentBookingsService {
       // Only an assigned agent gets a way to contact the customer.
       customerMobile: isMine ? (booking.customer?.user?.mobile ?? null) : null,
       address: this.toAddress(booking.address, isMine),
+      distanceKm,
       items: (booking.items ?? []).map((item) => ({
         serviceId: item.serviceId,
         serviceName: item.service?.name ?? null,
@@ -157,6 +167,17 @@ export class AgentBookingsService {
 
     const booking = await this.requireBooking(bookingId);
     await this.history.transition(booking, 'accepted', userId);
+
+    // Initialize the service checklist for this booking. Failure here must
+    // never block the accept flow — the agent still gets the job either way.
+    try {
+      await this.enhancedBooking.onBookingAccepted(bookingId);
+    } catch (err) {
+      this.logger.error(
+        `Failed to initialize checklist for booking ${bookingId}`,
+        err as Error,
+      );
+    }
 
     const agentName = agent.firstName || 'Your expert';
     const otpLine = booking.startOtp
@@ -442,25 +463,33 @@ export class AgentBookingsService {
         job.services.some((name) => matchesSkill(name, match.keywords)),
     );
 
+    const withDistance = await this.annotateDistanceKm(agentId, bySkill);
+    return withDistance.filter(
+      (job) =>
+        job.distanceKm == null || job.distanceKm <= match.serviceRadiusKm,
+    );
+  }
+
+  /** Attaches straight-line distance (km) from the agent's last known GPS ping to each job's address. */
+  private async annotateDistanceKm<
+    T extends {
+      address: { latitude?: number | null; longitude?: number | null } | null;
+    },
+  >(agentId: string, jobs: T[]) {
     const ping = await this.locationRepo.findOne({
       where: { agentId },
       order: { recordedAt: 'DESC' },
     });
-    if (!ping) return bySkill.map((job) => ({ ...job, distanceKm: null }));
+    if (!ping) return jobs.map((job) => ({ ...job, distanceKm: null }));
 
     const origin = { lat: Number(ping.latitude), lng: Number(ping.longitude) };
-    return bySkill
-      .map((job) => {
-        const lat = job.address?.latitude;
-        const lng = job.address?.longitude;
-        const distanceKm =
-          lat != null && lng != null ? haversineKm(origin.lat, origin.lng, lat, lng) : null;
-        return { ...job, distanceKm };
-      })
-      .filter(
-        (job) =>
-          job.distanceKm == null || job.distanceKm <= match.serviceRadiusKm,
-      );
+    return jobs.map((job) => {
+      const lat = job.address?.latitude;
+      const lng = job.address?.longitude;
+      const distanceKm =
+        lat != null && lng != null ? haversineKm(origin.lat, origin.lng, lat, lng) : null;
+      return { ...job, distanceKm };
+    });
   }
 }
 

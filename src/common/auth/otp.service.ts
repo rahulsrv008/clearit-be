@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -66,11 +67,12 @@ export class OtpService {
       throw new BadRequestException('No OTP to resend — request a new one');
     }
 
+    const useTwilio = !demoMode && this.sms.usesTwilioVerify();
     const code = this.generateCode(demoMode);
     await this.otpRepo.save(
       this.otpRepo.create({
         mobile,
-        otpHash: hashOtp(code),
+        otpHash: hashOtp(useTwilio ? '__twilio_verify__' : code),
         purpose,
         attempts: 0,
         expiresAt: new Date(Date.now() + ttl * 1000),
@@ -78,7 +80,14 @@ export class OtpService {
       }),
     );
 
-    await this.sms.sendOtp(mobile, code);
+    const sms = useTwilio
+      ? await this.sms.sendOtp(mobile, '')
+      : await this.sms.sendOtp(mobile, code);
+    if (!demoMode && !sms.delivered) {
+      throw new InternalServerErrorException(
+        sms.error || 'Could not send OTP SMS. Try again in a moment.',
+      );
+    }
 
     return {
       mobile,
@@ -107,7 +116,17 @@ export class OtpService {
     }
 
     session.attempts += 1;
-    if (session.otpHash !== hashOtp(code)) {
+    const useTwilio = this.sms.usesTwilioVerify() && session.otpHash === hashOtp('__twilio_verify__');
+    if (useTwilio) {
+      const check = await this.sms.checkTwilioOtp(mobile, code);
+      if (!check.ok) {
+        await this.otpRepo.save(session);
+        const left = Math.max(maxAttempts - session.attempts, 0);
+        throw new UnauthorizedException(
+          `${'error' in check ? check.error : 'Invalid OTP'} — ${left} attempt(s) left`,
+        );
+      }
+    } else if (session.otpHash !== hashOtp(code)) {
       await this.otpRepo.save(session);
       const left = Math.max(maxAttempts - session.attempts, 0);
       throw new UnauthorizedException(`Invalid OTP — ${left} attempt(s) left`);
@@ -146,6 +165,11 @@ export class OtpService {
   }
 
   private demoMode() {
-    return (this.config.get<string>('OTP_DEMO_MODE') || 'true') === 'true';
+    const flag = (this.config.get<string>('OTP_DEMO_MODE') || '').trim().toLowerCase();
+    if (flag === 'true' || flag === '1') return true;
+    if (flag === 'false' || flag === '0') return false;
+    const provider = (this.config.get<string>('SMS_PROVIDER') || '').trim();
+    const apiKey = (this.config.get<string>('SMS_API_KEY') || '').trim();
+    return !provider || !apiKey;
   }
 }
