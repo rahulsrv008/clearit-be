@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { Customer } from './customer';
 import { Booking } from './booking';
+import { ServiceArea } from './service-area';
 
 @Entity('customer_addresses')
 export class CustomerAddress {
@@ -48,6 +49,13 @@ export class CustomerAddress {
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
   longitude: string | null;
+
+  @Column({ name: 'service_area_id', type: 'uuid', nullable: true })
+  serviceAreaId: string | null;
+
+  @ManyToOne(() => ServiceArea, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'service_area_id' })
+  serviceArea: ServiceArea | null;
 
   @Column({ name: 'address_type', type: 'varchar', length: 30, nullable: true })
   addressType: string | null;

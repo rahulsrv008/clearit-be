@@ -36,6 +36,7 @@ import {
   assertTransition,
 } from 'src/common/booking/booking-status';
 import { NotificationDispatchService } from 'src/common/services/notification-dispatch.service';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 import {
   SETTING_KEYS,
   SettingsService,
@@ -97,6 +98,7 @@ export class CustomerBookingsService {
     private readonly history: BookingHistoryService,
     private readonly notifications: NotificationDispatchService,
     private readonly settings: SettingsService,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async create(userId: string, dto: CreateCustomerBookingDto) {
@@ -111,11 +113,7 @@ export class CustomerBookingsService {
     }
     const startTime = toTimeString(dto.startTime);
 
-    const serviceArea = address.pincode
-      ? await this.serviceAreaRepo.findOne({
-          where: { pincode: address.pincode, isActive: true },
-        })
-      : null;
+    const serviceArea = await this.resolveAddressZone(address);
 
     const priced = await this.priceItems(dto, serviceArea?.id ?? null);
     const subtotal = round2(
@@ -271,11 +269,7 @@ export class CustomerBookingsService {
     const tax = round2(((subtotal - discount) * taxPercent) / 100);
     const totalAmount = round2(subtotal - discount + tax);
 
-    const serviceArea = address.pincode
-      ? await this.serviceAreaRepo.findOne({
-          where: { pincode: address.pincode, isActive: true },
-        })
-      : null;
+    const serviceArea = await this.resolveAddressZone(address);
 
     const peopleLabel = cook
       ? ` · ${cook.count} ${cook.count === 1 ? 'person' : 'people'}`
@@ -568,6 +562,26 @@ export class CustomerBookingsService {
       averageRating: average === null ? null : round2(average),
       ratingCount: Number(stats?.count ?? 0),
     };
+  }
+
+  private async resolveAddressZone(address: CustomerAddress) {
+    if (address.serviceAreaId) {
+      const existing = await this.serviceAreaRepo.findOne({
+        where: { id: address.serviceAreaId, isActive: true },
+      });
+      if (existing) return existing;
+    }
+    const zone = await this.zones.resolve({
+      pincode: address.pincode,
+      latitude: address.latitude == null ? null : Number(address.latitude),
+      longitude: address.longitude == null ? null : Number(address.longitude),
+      city: address.city,
+    });
+    if (zone && address.serviceAreaId !== zone.id) {
+      address.serviceAreaId = zone.id;
+      await this.addressRepo.save(address);
+    }
+    return zone;
   }
 
   private async findOwn(

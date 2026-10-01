@@ -5,8 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
-import { Booking, CustomerAddress } from 'src/database/entities';
+import { Booking, Customer, CustomerAddress } from 'src/database/entities';
 import { IdentityService } from 'src/common/auth/identity.service';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 import { CreateCustomerAddressDto } from './dto/create-address.dto';
 import { UpdateCustomerAddressDto } from './dto/update-address.dto';
 
@@ -17,13 +18,17 @@ export class CustomerAddressesService {
     private readonly addressRepo: Repository<CustomerAddress>,
     @InjectRepository(Booking)
     private readonly bookingRepo: Repository<Booking>,
+    @InjectRepository(Customer)
+    private readonly customerRepo: Repository<Customer>,
     private readonly identity: IdentityService,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async list(userId: string) {
     const customerId = await this.identity.requireCustomerId(userId);
     const addresses = await this.addressRepo.find({
       where: { customerId },
+      relations: ['serviceArea'],
       order: { isDefault: 'DESC', createdAt: 'DESC' },
     });
     return addresses.map((address) => this.toResponse(address));
@@ -32,6 +37,12 @@ export class CustomerAddressesService {
   async create(userId: string, dto: CreateCustomerAddressDto) {
     const customerId = await this.identity.requireCustomerId(userId);
     const existing = await this.addressRepo.count({ where: { customerId } });
+    const zone = await this.zones.resolve({
+      pincode: dto.pincode,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      city: dto.city,
+    });
 
     const address = await this.addressRepo.save(
       this.addressRepo.create({
@@ -45,13 +56,17 @@ export class CustomerAddressesService {
         latitude: dto.latitude === undefined ? null : String(dto.latitude),
         longitude: dto.longitude === undefined ? null : String(dto.longitude),
         addressType: dto.addressType ?? null,
+        serviceAreaId: zone?.id ?? null,
         // The very first address is always the default one.
         isDefault: dto.isDefault === true || existing === 0,
       }),
     );
+    address.serviceArea = zone;
 
-    if (address.isDefault)
+    if (address.isDefault) {
       await this.clearOtherDefaults(customerId, address.id);
+      await this.syncHomeZone(customerId, zone?.id ?? null);
+    }
     return this.toResponse(address);
   }
 
@@ -70,9 +85,19 @@ export class CustomerAddressesService {
     if (dto.addressType !== undefined) address.addressType = dto.addressType;
     if (dto.isDefault !== undefined) address.isDefault = dto.isDefault;
 
+    const zone = await this.zones.resolve({
+      pincode: address.pincode,
+      latitude: address.latitude == null ? null : Number(address.latitude),
+      longitude: address.longitude == null ? null : Number(address.longitude),
+      city: address.city,
+    });
+    address.serviceAreaId = zone?.id ?? null;
+    address.serviceArea = zone;
+
     await this.addressRepo.save(address);
-    if (dto.isDefault === true) {
+    if (address.isDefault) {
       await this.clearOtherDefaults(customerId, address.id);
+      await this.syncHomeZone(customerId, zone?.id ?? null);
     }
     return this.toResponse(address);
   }
@@ -84,6 +109,7 @@ export class CustomerAddressesService {
     await this.clearOtherDefaults(customerId, address.id);
     address.isDefault = true;
     await this.addressRepo.save(address);
+    await this.syncHomeZone(customerId, address.serviceAreaId);
     return this.toResponse(address);
   }
 
@@ -100,16 +126,35 @@ export class CustomerAddressesService {
       );
     }
 
+    const wasDefault = address.isDefault;
     await this.addressRepo.remove(address);
+    if (wasDefault) {
+      const next = await this.addressRepo.findOne({
+        where: { customerId },
+        order: { createdAt: 'DESC' },
+      });
+      if (next) {
+        next.isDefault = true;
+        await this.addressRepo.save(next);
+        await this.syncHomeZone(customerId, next.serviceAreaId);
+      } else {
+        await this.syncHomeZone(customerId, null);
+      }
+    }
     return { id, deleted: true };
   }
 
   private async findOwn(customerId: string, id: string) {
     const address = await this.addressRepo.findOne({
       where: { id, customerId },
+      relations: ['serviceArea'],
     });
     if (!address) throw new NotFoundException('Address not found');
     return address;
+  }
+
+  private async syncHomeZone(customerId: string, homeZoneId: string | null) {
+    await this.customerRepo.update({ id: customerId }, { homeZoneId });
   }
 
   /** Keeps the "one default per customer" invariant. */
@@ -133,6 +178,8 @@ export class CustomerAddressesService {
       longitude: address.longitude === null ? null : Number(address.longitude),
       addressType: address.addressType,
       isDefault: address.isDefault,
+      serviceAreaId: address.serviceAreaId,
+      zone: this.zones.summary(address.serviceArea),
       createdAt: address.createdAt,
       updatedAt: address.updatedAt,
     };

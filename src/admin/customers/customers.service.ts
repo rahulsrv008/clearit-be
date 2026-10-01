@@ -14,6 +14,7 @@ import {
 } from 'src/database/entities';
 import { AuditService } from 'src/common/services/audit.service';
 import { NotificationDispatchService } from 'src/common/services/notification-dispatch.service';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 import { paginated, skipTake } from 'src/common/dto/pagination.dto';
 import { ListAdminCustomersDto } from './dto/list-customers.dto';
 import { UpdateAdminCustomerDto } from './dto/update-customer.dto';
@@ -30,6 +31,7 @@ interface CustomerListRow {
   totalBookings: number;
   lastBookingDate: string | null;
   createdAt: Date;
+  homeZoneId: string | null;
 }
 
 @Injectable()
@@ -46,6 +48,7 @@ export class AdminCustomersService {
     private readonly paymentRepo: Repository<Payment>,
     private readonly audit: AuditService,
     private readonly notifications: NotificationDispatchService,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async list(query: ListAdminCustomersDto) {
@@ -66,6 +69,7 @@ export class AdminCustomersService {
       .addSelect('user.email', 'email')
       .addSelect('user.isActive', 'isActive')
       .addSelect('customer.createdAt', 'createdAt')
+      .addSelect('customer.homeZoneId', 'homeZoneId')
       .addSelect('COUNT(booking.id)::int', 'totalBookings')
       // `date` columns are returned as text so the API keeps YYYY-MM-DD.
       .addSelect(
@@ -90,6 +94,8 @@ export class AdminCustomersService {
       countQb.getCount(),
     ]);
 
+    const zoneMap = await this.zones.summariesById(rows.map((row) => row.homeZoneId));
+
     return paginated(
       rows.map((row) => ({
         customerId: row.customerId,
@@ -101,6 +107,7 @@ export class AdminCustomersService {
         totalBookings: Number(row.totalBookings),
         lastBookingDate: row.lastBookingDate,
         createdAt: row.createdAt,
+        homeZone: row.homeZoneId ? zoneMap.get(row.homeZoneId) ?? null : null,
       })),
       total,
       query,
@@ -113,6 +120,7 @@ export class AdminCustomersService {
     const [addresses, statusRows, spent, recentBookings] = await Promise.all([
       this.addressRepo.find({
         where: { customerId: id },
+        relations: ['serviceArea'],
         order: { isDefault: 'DESC', createdAt: 'DESC' },
       }),
       this.bookingRepo
@@ -154,7 +162,22 @@ export class AdminCustomersService {
       dateOfBirth: customer.dateOfBirth,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt,
-      addresses,
+      homeZone: await this.zones.summaryById(customer.homeZoneId),
+      addresses: addresses.map((address) => ({
+        id: address.id,
+        addressLine1: address.addressLine1,
+        addressLine2: address.addressLine2,
+        landmark: address.landmark,
+        city: address.city,
+        state: address.state,
+        pincode: address.pincode,
+        latitude: address.latitude,
+        longitude: address.longitude,
+        addressType: address.addressType,
+        isDefault: address.isDefault,
+        serviceAreaId: address.serviceAreaId,
+        zone: this.zones.summary(address.serviceArea),
+      })),
       counts: {
         bookings: byStatus,
         totalBookings: statusRows.reduce(

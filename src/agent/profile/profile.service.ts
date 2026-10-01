@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { Agent, Booking, Rating, User } from 'src/database/entities';
 import { UpdateAgentProfileDto } from './dto/update-profile.dto';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 
 @Injectable()
 export class AgentProfileService {
@@ -16,6 +17,7 @@ export class AgentProfileService {
     @InjectRepository(Rating) private readonly ratingRepo: Repository<Rating>,
     @InjectRepository(Booking)
     private readonly bookingRepo: Repository<Booking>,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async get(userId: string) {
@@ -84,6 +86,9 @@ export class AgentProfileService {
       averageRating: Number(Number(stats?.average ?? 0).toFixed(2)),
       totalRatings: Number(stats?.total ?? 0),
       totalCompletedBookings: completedBookings,
+      homeZone: await this.zones.summaryById(agent.homeZoneId),
+      serviceAreas: await this.zones.listSummaries(agent.serviceAreas ?? []),
+      currentLocation: agent.currentLocation,
       createdAt: agent.createdAt,
       updatedAt: agent.updatedAt,
     };

@@ -7,12 +7,14 @@ import {
   OneToOne,
   JoinColumn,
   OneToMany,
+  ManyToOne,
 } from 'typeorm';
 import { User } from './user';
 import { CustomerAddress } from './customer-address';
 import { Booking } from './booking';
 import { Payment } from './payment';
 import { Rating } from './rating';
+import { ServiceArea } from './service-area';
 
 @Entity('customers')
 export class Customer {
@@ -40,6 +42,13 @@ export class Customer {
 
   @Column({ name: 'date_of_birth', type: 'date', nullable: true })
   dateOfBirth: string | null;
+
+  @Column({ name: 'home_zone', type: 'uuid', nullable: true })
+  homeZoneId: string | null;
+
+  @ManyToOne(() => ServiceArea, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'home_zone' })
+  homeZone: ServiceArea | null;
 
   @OneToMany(() => CustomerAddress, (address) => address.customer)
   addresses: CustomerAddress[];

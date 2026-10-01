@@ -21,4 +21,11 @@ export class CreateAgentLocationDto {
   @IsOptional()
   @IsUUID()
   bookingId?: string;
+
+  @ApiPropertyOptional({ description: 'GPS accuracy in metres, ignored by the API' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  accuracy?: number;
 }

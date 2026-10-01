@@ -18,8 +18,10 @@ import {
 import { AuditService } from 'src/common/services/audit.service';
 import { NotificationDispatchService } from 'src/common/services/notification-dispatch.service';
 import { paginated, skipTake } from 'src/common/dto/pagination.dto';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 import { ListAdminAgentsDto } from './dto/list-agents.dto';
 import { ApproveAdminAgentDto } from './dto/approve-agent.dto';
+import { AssignAdminAgentZonesDto } from './dto/assign-agent-zones.dto';
 import { RejectAdminAgentDto } from './dto/reject-agent.dto';
 import { SuspendAdminAgentDto } from './dto/suspend-agent.dto';
 import { VerifyAdminAgentDocumentDto } from './dto/verify-document.dto';
@@ -37,6 +39,9 @@ interface AgentListRow {
   documentsVerified: number;
   averageRating: string;
   completedBookings: number;
+  homeZoneId: string | null;
+  serviceAreas: string[] | null;
+  currentLocation: Agent['currentLocation'];
 }
 
 function today() {
@@ -62,6 +67,7 @@ export class AdminAgentsService {
     private readonly locationRepo: Repository<AgentLocation>,
     private readonly audit: AuditService,
     private readonly notifications: NotificationDispatchService,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async list(query: ListAdminAgentsDto) {
@@ -97,6 +103,9 @@ export class AdminAgentsService {
            WHERE bk.agent_id = agent.id AND bk.status = 'completed')`,
         'completedBookings',
       )
+      .addSelect('agent.homeZoneId', 'homeZoneId')
+      .addSelect('agent.serviceAreas', 'serviceAreas')
+      .addSelect('agent.currentLocation', 'currentLocation')
       .orderBy('agent.createdAt', 'DESC')
       .offset(skip)
       .limit(take);
@@ -113,6 +122,11 @@ export class AdminAgentsService {
       countQb.getCount(),
     ]);
 
+    const zoneMap = await this.zones.summariesById([
+      ...rows.map((row) => row.homeZoneId),
+      ...rows.flatMap((row) => row.serviceAreas ?? []),
+    ]);
+
     return paginated(
       rows.map((row) => ({
         agentId: row.agentId,
@@ -124,6 +138,11 @@ export class AdminAgentsService {
         averageRating: Number(Number(row.averageRating ?? 0).toFixed(2)),
         completedBookings: Number(row.completedBookings),
         joiningDate: row.joiningDate,
+        homeZone: row.homeZoneId ? zoneMap.get(row.homeZoneId) ?? null : null,
+        serviceAreas: (row.serviceAreas ?? [])
+          .map((id) => zoneMap.get(id))
+          .filter((zone): zone is NonNullable<typeof zone> => !!zone),
+        currentLocation: row.currentLocation ?? null,
       })),
       total,
       query,
@@ -197,6 +216,18 @@ export class AdminAgentsService {
       joiningDate: agent.joiningDate,
       createdAt: agent.createdAt,
       updatedAt: agent.updatedAt,
+      homeZone: await this.zones.summaryById(agent.homeZoneId),
+      serviceAreas: await this.zones.listSummaries(agent.serviceAreas ?? []),
+      currentLocation: agent.currentLocation,
+      address: {
+        addressLine1: agent.addressLine1,
+        locality: agent.locality,
+        city: agent.city,
+        state: agent.state,
+        pincode: agent.pincode,
+        latitude: agent.latitude === null ? null : Number(agent.latitude),
+        longitude: agent.longitude === null ? null : Number(agent.longitude),
+      },
       documents,
       bankAccount: bankAccount
         ? {
@@ -249,6 +280,7 @@ export class AdminAgentsService {
     if (!agent.firstName?.trim()) missing.push('first name');
     if (!documentCount) missing.push('at least one document');
     if (!bankAccount) missing.push('a bank account');
+    if (!dto.serviceAreaIds?.length) missing.push('at least one service location');
     if (missing.length) {
       throw new BadRequestException(
         `Agent profile is incomplete: missing ${missing.join(', ')}`,
@@ -259,7 +291,11 @@ export class AdminAgentsService {
       approvalStatus: agent.approvalStatus,
       status: agent.status,
       joiningDate: agent.joiningDate,
+      homeZoneId: agent.homeZoneId,
+      serviceAreas: agent.serviceAreas ?? [],
     };
+
+    await this.applyCoverage(agent, dto.serviceAreaIds, dto.homeZoneId);
 
     agent.approvalStatus = 'APPROVED';
     agent.status = 'ACTIVE';
@@ -284,11 +320,38 @@ export class AdminAgentsService {
         approvalStatus: agent.approvalStatus,
         status: agent.status,
         joiningDate: agent.joiningDate,
+        homeZoneId: agent.homeZoneId,
+        serviceAreas: agent.serviceAreas,
         remarks: dto.remarks ?? null,
       },
     });
 
     return this.statusResponse(agent, 'Agent approved.');
+  }
+
+  async assignZones(adminId: string, id: string, dto: AssignAdminAgentZonesDto) {
+    const agent = await this.requireAgent(id);
+    const oldData = {
+      homeZoneId: agent.homeZoneId,
+      serviceAreas: agent.serviceAreas ?? [],
+    };
+
+    await this.applyCoverage(agent, dto.serviceAreaIds, dto.homeZoneId);
+    await this.agentRepo.save(agent);
+
+    await this.audit.record({
+      userId: adminId,
+      action: 'AGENT_ZONES_ASSIGNED',
+      entityType: 'agents',
+      entityId: agent.id,
+      oldData,
+      newData: {
+        homeZoneId: agent.homeZoneId,
+        serviceAreas: agent.serviceAreas,
+      },
+    });
+
+    return this.statusResponse(agent, 'Service locations updated.');
   }
 
   async reject(adminId: string, id: string, dto: RejectAdminAgentDto) {
@@ -511,6 +574,19 @@ export class AdminAgentsService {
     return qb;
   }
 
+  private async applyCoverage(
+    agent: Agent,
+    serviceAreaIds: string[],
+    homeZoneId?: string | null,
+  ) {
+    const areas = await this.zones.requireAreas(serviceAreaIds);
+    agent.serviceAreas = areas.map((area) => area.id);
+    if (homeZoneId) {
+      await this.zones.requireAreas([homeZoneId]);
+      agent.homeZoneId = homeZoneId;
+    }
+  }
+
   private async requireAgent(id: string) {
     const agent = await this.agentRepo.findOne({
       where: { id },
@@ -526,6 +602,9 @@ export class AdminAgentsService {
       status: agent.status,
       approvalStatus: agent.approvalStatus,
       joiningDate: agent.joiningDate,
+      homeZoneId: agent.homeZoneId,
+      serviceAreas: agent.serviceAreas ?? [],
+      currentLocation: agent.currentLocation,
       message,
     };
   }

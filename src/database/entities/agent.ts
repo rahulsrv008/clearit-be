@@ -7,6 +7,7 @@ import {
   OneToOne,
   JoinColumn,
   OneToMany,
+  ManyToOne,
 } from 'typeorm';
 import { User } from './user';
 import { Booking } from './booking';
@@ -20,6 +21,13 @@ import { AgentIncentive } from './agent-incentive';
 import { SalaryRecord } from './salary-record';
 import { Rating } from './rating';
 import { AgentSkill } from './agent-skill';
+import { ServiceArea } from './service-area';
+
+export interface AgentCurrentLocation {
+  latitude: number;
+  longitude: number;
+  recordedAt: string;
+}
 
 @Entity('agents')
 export class Agent {
@@ -80,6 +88,24 @@ export class Agent {
 
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true })
   longitude: string | null;
+
+  @Column({ name: 'home_zone', type: 'uuid', nullable: true })
+  homeZoneId: string | null;
+
+  @ManyToOne(() => ServiceArea, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'home_zone' })
+  homeZone: ServiceArea | null;
+
+  @Column({
+    name: 'service_areas',
+    type: 'uuid',
+    array: true,
+    default: () => "'{}'",
+  })
+  serviceAreas: string[];
+
+  @Column({ name: 'current_location', type: 'jsonb', nullable: true })
+  currentLocation: AgentCurrentLocation | null;
 
   @OneToMany(() => Booking, (booking) => booking.agent)
   bookings: Booking[];

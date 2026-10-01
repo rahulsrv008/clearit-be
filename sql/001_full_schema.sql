@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS
   booking_items,
   bookings,
   service_pricing,
+  service_zone_areas,
   services,
   service_categories,
   service_areas,
@@ -160,9 +161,29 @@ CREATE TABLE service_areas (
     city VARCHAR(100),
     state VARCHAR(100),
     pincode VARCHAR(10),
+    code VARCHAR(32),
+    region VARCHAR(50),
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    service_radius_km INT DEFAULT 3,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX uq_service_areas_code ON service_areas (code) WHERE code IS NOT NULL;
+
+CREATE TABLE service_zone_areas (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    service_area_id UUID NOT NULL REFERENCES service_areas(id) ON DELETE CASCADE,
+    area_name VARCHAR(150) NOT NULL,
+    pincode VARCHAR(10),
+    buildings_cover JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_service_zone_areas_area_id ON service_zone_areas (service_area_id);
+CREATE INDEX idx_service_zone_areas_pincode ON service_zone_areas (pincode);
 
 CREATE TABLE service_pricing (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -416,6 +437,22 @@ CREATE TABLE audit_logs (
     ip_address VARCHAR(50),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS home_zone UUID REFERENCES service_areas(id) ON DELETE SET NULL;
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS service_areas UUID[] NOT NULL DEFAULT '{}';
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS current_location JSONB;
+ALTER TABLE customers
+  ADD COLUMN IF NOT EXISTS home_zone UUID REFERENCES service_areas(id) ON DELETE SET NULL;
+ALTER TABLE customer_addresses
+  ADD COLUMN IF NOT EXISTS service_area_id UUID REFERENCES service_areas(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_agents_home_zone ON agents (home_zone);
+CREATE INDEX IF NOT EXISTS idx_customers_home_zone ON customers (home_zone);
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_service_area
+  ON customer_addresses (service_area_id);
 
 CREATE INDEX idx_customers_user_id ON customers(user_id);
 CREATE INDEX idx_agents_user_id ON agents(user_id);

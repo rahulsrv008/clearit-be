@@ -7,10 +7,13 @@ import {
   Booking,
   BookingStatusHistory,
   Customer,
+  CustomerAddress,
   DeviceToken,
   Notification,
   OtpVerification,
   RefreshToken,
+  ServiceArea,
+  ServiceZoneArea,
   SystemSetting,
   User,
 } from 'src/database/entities';
@@ -21,6 +24,7 @@ import { AuditService } from './services/audit.service';
 import { NotificationDispatchService } from './services/notification-dispatch.service';
 import { BookingHistoryService } from './booking/booking-history.service';
 import { SettingsService } from './services/settings.service';
+import { ZoneResolverService } from './services/zone-resolver.service';
 
 /**
  * Cross-app building blocks (identity, tokens, OTP, audit, notifications).
@@ -33,6 +37,7 @@ import { SettingsService } from './services/settings.service';
     TypeOrmModule.forFeature([
       User,
       Customer,
+      CustomerAddress,
       Agent,
       Admin,
       OtpVerification,
@@ -43,6 +48,8 @@ import { SettingsService } from './services/settings.service';
       Booking,
       BookingStatusHistory,
       SystemSetting,
+      ServiceArea,
+      ServiceZoneArea,
     ]),
   ],
   providers: [
@@ -53,6 +60,7 @@ import { SettingsService } from './services/settings.service';
     NotificationDispatchService,
     BookingHistoryService,
     SettingsService,
+    ZoneResolverService,
   ],
   exports: [
     IdentityService,
@@ -62,6 +70,7 @@ import { SettingsService } from './services/settings.service';
     NotificationDispatchService,
     BookingHistoryService,
     SettingsService,
+    ZoneResolverService,
   ],
 })
 export class CommonModule {}

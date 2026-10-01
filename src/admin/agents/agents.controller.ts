@@ -16,6 +16,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { AdminAgentsService } from './agents.service';
 import { ListAdminAgentsDto } from './dto/list-agents.dto';
 import { ApproveAdminAgentDto } from './dto/approve-agent.dto';
+import { AssignAdminAgentZonesDto } from './dto/assign-agent-zones.dto';
 import { RejectAdminAgentDto } from './dto/reject-agent.dto';
 import { SuspendAdminAgentDto } from './dto/suspend-agent.dto';
 import { VerifyAdminAgentDocumentDto } from './dto/verify-document.dto';
@@ -53,6 +54,16 @@ export class AdminAgentsController {
     @Body() dto: ApproveAdminAgentDto,
   ) {
     return this.agentsService.approve(adminId, id, dto);
+  }
+
+  @Patch(':id/service-locations')
+  @ApiOperation({ summary: 'Assign home zone and service locations to an agent' })
+  assignZones(
+    @CurrentUser('sub') adminId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignAdminAgentZonesDto,
+  ) {
+    return this.agentsService.assignZones(adminId, id, dto);
   }
 
   @Post(':id/reject')

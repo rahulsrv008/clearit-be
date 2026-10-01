@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AgentLocation, Booking } from 'src/database/entities';
+import { Agent, AgentLocation, Booking } from 'src/database/entities';
 import { ACTIVE_STATUSES } from 'src/common/booking/booking-status';
 import { AgentContextService } from '../shared/agent-context.service';
 import { CreateAgentLocationDto } from './dto/create-location.dto';
@@ -18,6 +18,8 @@ export class AgentLocationService {
     private readonly locationRepo: Repository<AgentLocation>,
     @InjectRepository(Booking)
     private readonly bookingRepo: Repository<Booking>,
+    @InjectRepository(Agent)
+    private readonly agentRepo: Repository<Agent>,
     private readonly context: AgentContextService,
   ) {}
 
@@ -44,11 +46,19 @@ export class AgentLocationService {
       }),
     );
 
+    agent.currentLocation = {
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      recordedAt: ping.recordedAt.toISOString(),
+    };
+    await this.agentRepo.save(agent);
+
     return this.toResponse(ping);
   }
 
   async latest(userId: string) {
     const agent = await this.context.requireApprovedAgent(userId);
+    if (agent.currentLocation) return { ...agent.currentLocation, source: 'current_location' };
     const ping = await this.locationRepo.findOne({
       where: { agentId: agent.id },
       order: { recordedAt: 'DESC' },

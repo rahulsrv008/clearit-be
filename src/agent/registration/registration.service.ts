@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Agent, AgentBankAccount, AgentDocument } from 'src/database/entities';
 import { AgentContextService } from '../shared/agent-context.service';
+import { ZoneResolverService } from 'src/common/services/zone-resolver.service';
 import { CreateAgentRegistrationDto } from './dto/create-registration.dto';
 import { UpdateAgentPersonalDetailsDto } from './dto/update-personal-details.dto';
 import { SaveAgentAddressDto } from './dto/save-address.dto';
@@ -23,6 +24,7 @@ export class AgentRegistrationService {
     @InjectRepository(AgentBankAccount)
     private readonly bankRepo: Repository<AgentBankAccount>,
     private readonly context: AgentContextService,
+    private readonly zones: ZoneResolverService,
   ) {}
 
   async register(userId: string, dto: CreateAgentRegistrationDto) {
@@ -70,6 +72,21 @@ export class AgentRegistrationService {
     agent.longitude =
       dto.longitude === undefined ? agent.longitude : dto.longitude.toFixed(7);
 
+    const zone = await this.zones.resolve({
+      pincode: agent.pincode,
+      latitude: agent.latitude == null ? null : Number(agent.latitude),
+      longitude: agent.longitude == null ? null : Number(agent.longitude),
+      city: agent.city,
+    });
+    agent.homeZoneId = zone?.id ?? null;
+    if (agent.latitude != null && agent.longitude != null) {
+      agent.currentLocation = {
+        latitude: Number(agent.latitude),
+        longitude: Number(agent.longitude),
+        recordedAt: new Date().toISOString(),
+      };
+    }
+
     await this.agentRepo.save(agent);
     return this.status(userId);
   }
@@ -110,6 +127,9 @@ export class AgentRegistrationService {
         latitude: agent.latitude === null ? null : Number(agent.latitude),
         longitude: agent.longitude === null ? null : Number(agent.longitude),
       },
+      homeZone: await this.zones.summaryById(agent.homeZoneId),
+      serviceAreas: await this.zones.listSummaries(agent.serviceAreas ?? []),
+      currentLocation: agent.currentLocation,
       documents: documents.map((document) => ({
         documentType: document.documentType,
         verificationStatus: document.verificationStatus,
